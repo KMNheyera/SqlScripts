@@ -1,4 +1,4 @@
-USE [ClientManagerDB];
+USE [ClientManagerDb];
 GO
 EXEC dbo.sp_GetClients;
 

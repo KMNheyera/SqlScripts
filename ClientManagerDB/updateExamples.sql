@@ -1,4 +1,4 @@
-USE [ClientManagerDB];
+USE [ ];
 GO
 
 

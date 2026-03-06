@@ -1,13 +1,13 @@
 USE master;
 GO
 
-IF DB_ID('ClientManagerDB') IS NULL
+IF DB_ID('ClientManagerDb') IS NULL
 BEGIN
-    CREATE DATABASE ClientManagerDB;
+    CREATE DATABASE ClientManagerDb;
 END;
 GO
 
-USE ClientManagerDB;
+USE ClientManagerDb;
 GO
 
 -- Drop views

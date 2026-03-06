@@ -1,7 +1,16 @@
 USE master;
 GO
 
-USE ClientManagerDB;
+IF NOT EXISTS (SELECT name 
+               FROM sys.databases 
+               WHERE name = N'ClientManagerDb')
+BEGIN
+    CREATE DATABASE ClientManagerDb;
+END
+GO
+
+
+USE ClientManagerDb;
 GO
 
 -- ============ TABLES ============
@@ -22,16 +31,22 @@ GO
 -- Contacts table
 CREATE TABLE dbo.Contacts
 (
-    ContactId INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    ContactId INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_Contacts PRIMARY KEY,
     [Name] NVARCHAR(100) NOT NULL,
     Surname NVARCHAR(100) NOT NULL,
-    Email NVARCHAR(255) NOT NULL UNIQUE, -- must be unique for all contacts
-    CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-    UpdatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+    FullName AS (Surname + N' ' + [Name]) PERSISTED,
+    Email NVARCHAR(255) NOT NULL CONSTRAINT UQ_Contacts_Email UNIQUE,
+    CreatedAt DATETIME2 NOT NULL CONSTRAINT DF_Contacts_CreatedAt DEFAULT SYSUTCDATETIME(),
+    UpdatedAt DATETIME2 NOT NULL CONSTRAINT DF_Contacts_UpdatedAt DEFAULT SYSUTCDATETIME()
 );
 GO
 
-CREATE INDEX IX_Contacts_FullName ON dbo.Contacts(Surname ASC, Name ASC);
+CREATE INDEX IX_Contacts_FullName
+ON dbo.Contacts (FullName);
+GO
+
+CREATE INDEX IX_Contacts_Surname
+ON dbo.Contacts (Surname);
 GO
 
 -- ClientContacts linking table (many-to-many)
@@ -52,46 +67,57 @@ GO
 
 -- ============ FUNCTION: fn_GetAlphaPart ============
 
-CREATE FUNCTION dbo.fn_GetAlphaPart(@Name NVARCHAR(200))
+CREATE OR ALTER FUNCTION [dbo].[fn_GetAlphaPart](@Name NVARCHAR(200))
 RETURNS CHAR(3)
 AS
 BEGIN
-    DECLARE @clean NVARCHAR(200) = UPPER(LTRIM(RTRIM(ISNULL(@Name, ''))));
-    DECLARE @result CHAR(3) = 'AAA';
+    DECLARE @clean NVARCHAR(200) = UPPER(LTRIM(RTRIM(ISNULL(@Name,''))));
+    DECLARE @result CHAR(3) = '   ';
     DECLARE @i INT = 1;
-    DECLARE @len INT = LEN(@clean);
+
+    -- Check if string has at least 3 words
+    IF (LEN(@clean) - LEN(REPLACE(@clean,' ',''))) >= 2
+    BEGIN
+        DECLARE @word TABLE (id INT IDENTITY(1,1), w NVARCHAR(100));
+
+        INSERT INTO @word
+        SELECT value FROM STRING_SPLIT(@clean,' ');
+
+        SELECT TOP 3
+            @result = STUFF(@result,id,1,LEFT(w,1))
+        FROM @word;
+
+        RETURN @result;
+    END
+
+    -- Otherwise use original logic
     DECLARE @pos INT = 1;
+    DECLARE @len INT = LEN(@clean);
     DECLARE @ch NCHAR(1);
 
-    SET @result = '   ';
-
-    -- Collect first up to 3 letters from name
     WHILE @pos <= @len AND @i <= 3
     BEGIN
-        SET @ch = SUBSTRING(@clean, @pos, 1);
-        IF @ch BETWEEN N'A' AND N'Z'
+        SET @ch = SUBSTRING(@clean,@pos,1);
+
+        IF @ch BETWEEN 'A' AND 'Z'
         BEGIN
-            SET @result = STUFF(@result, @i, 1, @ch);
+            SET @result = STUFF(@result,@i,1,@ch);
             SET @i = @i + 1;
         END
+
         SET @pos = @pos + 1;
     END
 
-    -- If less than 3 letters found, pad with A..Z sequentially starting from 'A'
-    DECLARE @padStart INT = 65; -- 'A'
-    DECLARE @padIndex INT = 0;
+    -- Pad remaining with A
     WHILE @i <= 3
     BEGIN
-        DECLARE @padChar CHAR(1) = CHAR(@padStart + (@padIndex % 26));
-        SET @result = STUFF(@result, @i, 1, @padChar);
+        SET @result = STUFF(@result,@i,1,'A');
         SET @i = @i + 1;
-        SET @padIndex = @padIndex + 1;
     END
 
     RETURN @result;
 END;
 GO
-
 -- ============ VIEWS ============
 IF OBJECT_ID('dbo.vw_ClientList', 'V') IS NOT NULL DROP VIEW dbo.vw_ClientList;
 GO
@@ -111,15 +137,17 @@ LEFT JOIN (
 ) cc ON c.ClientId = cc.ClientId;
 GO
 
-IF OBJECT_ID('dbo.vw_ContactList', 'V') IS NOT NULL DROP VIEW dbo.vw_ContactList;
+IF OBJECT_ID('dbo.vw_ContactList', 'V') IS NOT NULL
+    DROP VIEW dbo.vw_ContactList;
 GO
 
 CREATE VIEW dbo.vw_ContactList
 AS
 SELECT
     ct.ContactId,
-    ct.Name,
+    ct.[Name],
     ct.Surname,
+    ct.FullName,
     ct.Email,
     ISNULL(cl.NumClients, 0) AS NumClients
 FROM dbo.Contacts ct
@@ -388,7 +416,7 @@ GO
 CREATE PROCEDURE dbo.sp_GetContacts
     @PageNumber INT = 1,
     @PageSize INT = 0,
-    @OrderBy NVARCHAR(100) = N'Surname',
+    @OrderBy NVARCHAR(100) = N'FullName',
     @OrderDir NVARCHAR(4) = N'ASC'
 AS
 BEGIN
@@ -397,7 +425,7 @@ BEGIN
     IF UPPER(@OrderDir) NOT IN ('ASC','DESC') SET @OrderDir = 'ASC';
 
     DECLARE @sql NVARCHAR(MAX) = N'
-    SELECT ContactId, Name, Surname, Email, NumClients
+    SELECT ContactId, Name, Surname, FullName, Email, NumClients
     FROM dbo.vw_ContactList
     ORDER BY ' + QUOTENAME(@OrderBy) + ' ' + @OrderDir;
 

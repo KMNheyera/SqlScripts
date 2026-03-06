@@ -1,4 +1,4 @@
-USE [ClientManagerDB];
+USE [ClientManagerDb];
 GO
 
 -- Ensure stored procedures exist before seeding
